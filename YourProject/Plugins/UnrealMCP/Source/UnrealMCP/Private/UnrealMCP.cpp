@@ -36,7 +36,8 @@ void FUnrealMCPModule::ShutdownModule()
     IPythonScriptPlugin* PythonPlugin = FModuleManager::GetModulePtr<IPythonScriptPlugin>("PythonScriptPlugin");
     if (PythonPlugin && PythonPlugin->IsPythonAvailable())
     {
-        PythonPlugin->ExecPythonCommand(TEXT("import plugin_server; plugin_server.stop()"));
+        PythonPlugin->ExecPythonCommand(
+            TEXT("import sys; _mod = sys.modules.get('unrealmcp_bridge'); _mod and _mod.stop()"));
     }
 }
 
@@ -68,7 +69,12 @@ void FUnrealMCPModule::BootstrapPythonBridge()
         return;
     }
 
-    const FString Cmd = FString::Printf(TEXT("exec(open(r'%s').read())"), *ScriptPath);
+    // Use importlib to load the script under a unique module name so ShutdownModule
+    // can reliably locate and stop it via sys.modules['unrealmcp_bridge'], regardless
+    // of other plugin_server modules that may exist on sys.path.
+    const FString Cmd = FString::Printf(
+        TEXT("import importlib.util, sys; _spec = importlib.util.spec_from_file_location('unrealmcp_bridge', r'%s'); _mod = importlib.util.module_from_spec(_spec); sys.modules['unrealmcp_bridge'] = _mod; _spec.loader.exec_module(_mod)"),
+        *ScriptPath);
     PythonPlugin->ExecPythonCommand(*Cmd);
 
     UE_LOG(LogTemp, Log, TEXT("UnrealMCP: Python HTTP bridge started on 127.0.0.1:8765"));

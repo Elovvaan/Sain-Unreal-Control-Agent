@@ -13,14 +13,12 @@ void FUnrealMCPModule::StartupModule()
 
     if (GEngine)
     {
-        GEngine->OnPostEditorTick().AddLambda([this](float /*DeltaTime*/)
+        TickDelegateHandle = GEngine->OnPostEditorTick().AddLambda([this](float /*DeltaTime*/)
         {
-            static bool bStarted = false;
-            if (!bStarted)
-            {
-                bStarted = true;
-                BootstrapPythonBridge();
-            }
+            // Remove ourselves immediately so this fires only once.
+            GEngine->OnPostEditorTick().Remove(TickDelegateHandle);
+            TickDelegateHandle.Reset();
+            BootstrapPythonBridge();
         });
     }
     else
@@ -32,6 +30,13 @@ void FUnrealMCPModule::StartupModule()
 void FUnrealMCPModule::ShutdownModule()
 {
     UE_LOG(LogTemp, Log, TEXT("UnrealMCP: ShutdownModule - stopping HTTP bridge"));
+
+    // Remove the tick delegate if bootstrap never fired (e.g. very early shutdown).
+    if (GEngine && TickDelegateHandle.IsValid())
+    {
+        GEngine->OnPostEditorTick().Remove(TickDelegateHandle);
+        TickDelegateHandle.Reset();
+    }
 
     IPythonScriptPlugin* PythonPlugin = FModuleManager::GetModulePtr<IPythonScriptPlugin>("PythonScriptPlugin");
     if (PythonPlugin && PythonPlugin->IsPythonAvailable())

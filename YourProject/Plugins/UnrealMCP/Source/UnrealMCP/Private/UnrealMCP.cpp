@@ -36,8 +36,17 @@ void FUnrealMCPModule::ShutdownModule()
     IPythonScriptPlugin* PythonPlugin = FModuleManager::GetModulePtr<IPythonScriptPlugin>("PythonScriptPlugin");
     if (PythonPlugin && PythonPlugin->IsPythonAvailable())
     {
-        PythonPlugin->ExecPythonCommand(
-            TEXT("import sys; _mod = sys.modules.get('unrealmcp_bridge'); _mod and _mod.stop()"));
+        PythonPlugin->ExecPythonCommand(TEXT(
+            "import sys\n"
+            "_mod = sys.modules.get('unrealmcp_bridge')\n"
+            "if _mod:\n"
+            "    try:\n"
+            "        _mod.stop()\n"
+            "    except Exception as _e:\n"
+            "        import unreal; unreal.log(f'UnrealMCP: error stopping bridge: {_e}')\n"
+            "else:\n"
+            "    import unreal; unreal.log('UnrealMCP: bridge module not found in sys.modules; nothing to stop')\n"
+        ));
     }
 }
 
@@ -73,7 +82,11 @@ void FUnrealMCPModule::BootstrapPythonBridge()
     // can reliably locate and stop it via sys.modules['unrealmcp_bridge'], regardless
     // of other plugin_server modules that may exist on sys.path.
     const FString Cmd = FString::Printf(
-        TEXT("import importlib.util, sys; _spec = importlib.util.spec_from_file_location('unrealmcp_bridge', r'%s'); _mod = importlib.util.module_from_spec(_spec); sys.modules['unrealmcp_bridge'] = _mod; _spec.loader.exec_module(_mod)"),
+        TEXT("import importlib.util, sys\n"
+             "_spec = importlib.util.spec_from_file_location('unrealmcp_bridge', r'%s')\n"
+             "_mod = importlib.util.module_from_spec(_spec)\n"
+             "sys.modules['unrealmcp_bridge'] = _mod\n"
+             "_spec.loader.exec_module(_mod)"),
         *ScriptPath);
     PythonPlugin->ExecPythonCommand(*Cmd);
 

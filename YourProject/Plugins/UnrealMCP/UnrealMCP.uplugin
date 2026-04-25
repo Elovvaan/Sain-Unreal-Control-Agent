@@ -1,0 +1,41 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0.0",
+  "FriendlyName": "Unreal MCP Bridge",
+  "Description": "HTTP bridge plugin that exposes Unreal Editor control endpoints for MCP clients.",
+  "Category": "Scripting",
+  "CreatedBy": "Sain Unreal Control Agent",
+  "EnabledByDefault": true,
+  "CanContainContent": true,
+  "IsBetaVersion": false,
+  "Modules": [
+    {
+      "Name": "UnrealMCP",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": true
+    },
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true
+    },
+    {
+      "Name": "SequencerScripting",
+      "Enabled": true
+    },
+    {
+      "Name": "CinematicCamera",
+      "Enabled": true
+    },
+    {
+      "Name": "RemoteControl",
+      "Enabled": true
+    }
+  ]
+}

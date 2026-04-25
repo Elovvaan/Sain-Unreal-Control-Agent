@@ -56,7 +56,7 @@ def _get_int_env(name: str, default: int) -> int:
 UNREAL_BRIDGE_URL = os.environ.get("UNREAL_BRIDGE_URL") or os.environ.get("UNREAL_PLUGIN_URL") or "http://127.0.0.1:8765"
 UNREAL_AUTH_TOKEN = os.environ.get("UNREAL_AUTH_TOKEN", "").strip()
 REQUEST_TIMEOUT = _get_float_env("REQUEST_TIMEOUT", 60.0)
-HOST = os.environ.get("HOST", "127.0.0.1")
+HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = _get_int_env("PORT", 3000)
 
 mcp_app = Server("sane-unreal-agent")

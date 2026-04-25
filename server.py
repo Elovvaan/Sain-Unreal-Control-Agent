@@ -422,4 +422,4 @@ if __name__ == "__main__":
     else:
         import uvicorn
 
-        uvicorn.run("server:api", host=HOST, port=PORT, log_level=os.environ.get("UVICORN_LOG_LEVEL", "info"))
+        uvicorn.run(api, host=HOST, port=PORT, log_level=os.environ.get("UVICORN_LOG_LEVEL", "info"))

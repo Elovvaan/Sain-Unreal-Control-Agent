@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 from typing import Any
 from urllib.parse import urlparse
@@ -56,7 +57,7 @@ UNREAL_BRIDGE_URL = os.environ.get("UNREAL_BRIDGE_URL") or os.environ.get("UNREA
 UNREAL_AUTH_TOKEN = os.environ.get("UNREAL_AUTH_TOKEN", "").strip()
 REQUEST_TIMEOUT = _get_float_env("REQUEST_TIMEOUT", 60.0)
 HOST = os.environ.get("HOST", "0.0.0.0")
-PORT = _get_int_env("PORT", 8000)
+PORT = _get_int_env("PORT", 3000)
 
 mcp_app = Server("sane-unreal-agent")
 api = FastAPI(title="SANE Unreal Agent Server", version="1.0.0")
@@ -347,6 +348,23 @@ async def bridge_health() -> dict[str, Any]:
         }
 
 
+def detect_unreal_editor_process() -> bool:
+    """Best-effort local process detection for Unreal Editor."""
+    if os.name == "nt":
+        command = ["tasklist"]
+        needles = ("UnrealEditor.exe", "UE4Editor.exe")
+    else:
+        command = ["ps", "-A", "-o", "comm="]
+        needles = ("UnrealEditor", "UE4Editor")
+
+    try:
+        proc_output = subprocess.run(command, capture_output=True, text=True, check=False, timeout=2)
+        process_list = proc_output.stdout
+        return any(needle in process_list for needle in needles)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _ok(action: str, result: Any, logs: list[str] | None = None,
         screenshot_path: str | None = None,
         affected_assets: list[str] | None = None) -> dict:
@@ -410,9 +428,24 @@ async def root() -> dict[str, Any]:
 
 @api.get("/health")
 async def health() -> dict[str, Any]:
+    bridge = await bridge_health()
+    editor_detected = await asyncio.to_thread(detect_unreal_editor_process)
+    bridge_up = bridge.get("reachable", False)
+    message = None
+    if not bridge_up:
+        message = "Unreal plugin bridge is not running."
+    elif not editor_detected:
+        message = "Open Unreal Editor first."
+
     return {
-        "status": "ok",
+        "status": "ok" if bridge_up and editor_detected else "degraded",
         "service": "sane-unreal-agent",
+        "mcp": "up",
+        "unreal_bridge": "up" if bridge_up else "down",
+        "unreal_editor_detected": editor_detected,
+        "message": message,
+        "bridge_url": UNREAL_BRIDGE_URL,
+        "bridge_error": bridge.get("error"),
     }
 
 

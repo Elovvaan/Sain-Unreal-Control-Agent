@@ -153,6 +153,28 @@ LogTemp: UnrealControlPlugin: HTTP bridge listening on 127.0.0.1:8765
 
 ## Test Commands
 
+### Local-only startup (exact order)
+
+1. **Open Unreal Editor first** (your project with UnrealControlPlugin enabled).
+2. Confirm the Unreal plugin bridge is live:
+   ```bash
+   curl http://127.0.0.1:8765/health
+   ```
+3. In this repo root, start the local MCP HTTP server:
+   ```bash
+   npm run local:unreal
+   ```
+4. In another terminal, verify local MCP health:
+   ```bash
+   curl http://127.0.0.1:3000/health
+   ```
+5. Call a tool through MCP HTTP proxy:
+   ```bash
+   curl -X POST http://127.0.0.1:3000/mcp/call_tool \
+     -H "Content-Type: application/json" \
+     -d '{"name":"get_editor_state","arguments":{}}'
+   ```
+
 ### Health check (curl)
 
 ```bash

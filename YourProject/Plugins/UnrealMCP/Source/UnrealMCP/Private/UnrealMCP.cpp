@@ -32,7 +32,7 @@ void FUnrealMCPModule::ShutdownModule()
 {
     UE_LOG(LogTemp, Log, TEXT("UnrealMCP: ShutdownModule - stopping HTTP bridge"));
 
-    // Remove the tick delegate if bootstrap never fired (e.g. very early shutdown).
+    // Remove the tick delegate if it was registered and is still active.
     if (GEngine && TickDelegateHandle.IsValid())
     {
         GEngine->OnPostEditorTick().Remove(TickDelegateHandle);

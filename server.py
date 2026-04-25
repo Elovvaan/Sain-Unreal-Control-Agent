@@ -249,7 +249,12 @@ LAST_BRIDGE_ERROR: str | None = None
 
 def _bridge_host(url: str) -> str:
     try:
-        return (urlparse(url).hostname or "").lower()
+        normalized_url = url.strip()
+        if not normalized_url:
+            return ""
+        if "://" not in normalized_url:
+            normalized_url = f"http://{normalized_url}"
+        return (urlparse(normalized_url).hostname or "").lower()
     except Exception:  # noqa: BLE001
         return ""
 

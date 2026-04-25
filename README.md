@@ -153,7 +153,7 @@ LogTemp: UnrealControlPlugin: HTTP bridge listening on 127.0.0.1:8765
 
 ## Test Commands
 
-## Local-only startup (exact order)
+### Local-only startup (exact order)
 
 1. **Open Unreal Editor first** (your project with UnrealControlPlugin enabled).
 2. Confirm the Unreal plugin bridge is live:

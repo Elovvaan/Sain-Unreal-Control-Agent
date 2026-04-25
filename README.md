@@ -290,3 +290,61 @@ Every response envelope:
   "affected_assets": ["/Game/Cinematics/Intro_01"]
 }
 ```
+
+---
+
+
+## Railway Deployment (MCP/Bridge Server Only)
+
+This deploy target is **only** the SANE server (`server.py`) for remote MCP/tool testing.
+Do **not** deploy Unreal Engine or the Unreal plugin to Railway.
+
+### Start Command
+
+```bash
+uvicorn server:api --host 0.0.0.0 --port $PORT
+```
+
+A `Procfile` is included with this exact command.
+
+### Required Environment Variables
+
+- `PORT` (provided by Railway automatically)
+- `UNREAL_BRIDGE_URL` (URL for your Unreal plugin bridge, e.g. `https://<your-tunnel>/`)
+
+### Optional Environment Variables
+
+- `UNREAL_AUTH_TOKEN` (token forwarded to the Unreal bridge as `Authorization: Bearer ...` and `X-Unreal-Auth-Token`)
+- `REQUEST_TIMEOUT` (defaults to `60`)
+- `LOG_LEVEL` (defaults to `INFO`)
+- `SERVER_MODE` (`http` default; set `stdio` only for local desktop MCP)
+
+### Safe Diagnostics Endpoints
+
+- `GET /health` → liveness check for Railway
+- `GET /status` → server config + Unreal bridge reachability (token never returned)
+- `GET /tools` → supported tool list
+
+### MCP/Tool Endpoints
+
+- `GET /mcp/tools`
+- `POST /mcp/call_tool`
+- `POST /tool/{name}`
+
+### Post-Deploy Test URLs
+
+Replace `<app>` with your Railway domain:
+
+- `https://<app>.up.railway.app/health`
+- `https://<app>.up.railway.app/status`
+- `https://<app>.up.railway.app/tools`
+- `https://<app>.up.railway.app/mcp/tools`
+
+Example tool call:
+
+```bash
+curl -X POST "https://<app>.up.railway.app/tool/get_editor_state" \
+  -H "content-type: application/json" \
+  -d '{"args": {}}'
+```
+

@@ -114,9 +114,22 @@ def start():
 
 
 def stop():
-    global _httpd
+    global _httpd, _server_thread
     if _httpd:
-        _httpd.shutdown()
+        httpd = _httpd
+        server_thread = _server_thread
+        try:
+            httpd.shutdown()
+            httpd.server_close()
+            if (
+                server_thread
+                and server_thread.is_alive()
+                and server_thread is not threading.current_thread()
+            ):
+                server_thread.join(timeout=5)
+        finally:
+            _httpd = None
+            _server_thread = None
         unreal.log("UnrealMCP: HTTP bridge stopped")
 
 

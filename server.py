@@ -28,11 +28,34 @@ logging.basicConfig(
 )
 log = logging.getLogger("sane-unreal-agent")
 
+
+def _get_float_env(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        log.warning("Invalid %s value %r; falling back to default %s", name, value, default)
+        return default
+
+
+def _get_int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        log.warning("Invalid %s value %r; falling back to default %s", name, value, default)
+        return default
+
+
 UNREAL_BRIDGE_URL = os.environ.get("UNREAL_BRIDGE_URL") or os.environ.get("UNREAL_PLUGIN_URL") or "http://127.0.0.1:8765"
 UNREAL_AUTH_TOKEN = os.environ.get("UNREAL_AUTH_TOKEN", "").strip()
-REQUEST_TIMEOUT = float(os.environ.get("REQUEST_TIMEOUT", "60"))
+REQUEST_TIMEOUT = _get_float_env("REQUEST_TIMEOUT", 60.0)
 HOST = os.environ.get("HOST", "0.0.0.0")
-PORT = int(os.environ.get("PORT", "8000"))
+PORT = _get_int_env("PORT", 8000)
 
 mcp_app = Server("sane-unreal-agent")
 api = FastAPI(title="SANE Unreal Agent Server", version="1.0.0")

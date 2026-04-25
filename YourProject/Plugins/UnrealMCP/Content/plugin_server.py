@@ -107,7 +107,12 @@ def start():
         unreal.log("UnrealMCP: server already running")
         return
 
-    _httpd = HTTPServer(("127.0.0.1", PORT), Handler)
+    try:
+        _httpd = HTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError as e:
+        _httpd = None
+        unreal.log(f"UnrealMCP: failed to start HTTP bridge on 127.0.0.1:{PORT}: {e}")
+        return
     _server_thread = threading.Thread(target=_httpd.serve_forever, daemon=True)
     _server_thread.start()
     unreal.log(f"UnrealMCP: HTTP bridge listening on 127.0.0.1:{PORT}")

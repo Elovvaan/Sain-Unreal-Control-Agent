@@ -139,7 +139,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or
 }
 ```
 
-For Railway deployments, set this to your tunnel URL (Cloudflare Tunnel/ngrok), not localhost.
+This `env` block is for local Claude Desktop use. If you are running the MCP server locally, set `UNREAL_BRIDGE_URL` and `UNREAL_PLUGIN_URL` to your public tunnel URL (Cloudflare Tunnel/ngrok), not localhost. If you deploy via Railway, set these values in Railway environment variables instead of `claude_desktop_config.json`.
 
 ### 5 — Launch the editor
 

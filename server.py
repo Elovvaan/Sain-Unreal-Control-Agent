@@ -429,7 +429,7 @@ async def root() -> dict[str, Any]:
 @api.get("/health")
 async def health() -> dict[str, Any]:
     bridge = await bridge_health()
-    editor_detected = detect_unreal_editor_process()
+    editor_detected = await asyncio.to_thread(detect_unreal_editor_process)
     bridge_up = bridge.get("reachable", False)
     message = None
     if not bridge_up:

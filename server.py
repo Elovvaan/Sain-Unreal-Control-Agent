@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -243,6 +244,35 @@ TOOL_DEFINITIONS: list[Tool] = [
     ),
 ]
 TOOL_NAMES = {tool.name for tool in TOOL_DEFINITIONS}
+LAST_BRIDGE_ERROR: str | None = None
+
+
+def _bridge_host(url: str) -> str:
+    try:
+        normalized_url = url.strip()
+        if not normalized_url:
+            return ""
+        if "://" not in normalized_url:
+            normalized_url = f"http://{normalized_url}"
+        return (urlparse(normalized_url).hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _is_loopback_bridge(url: str) -> bool:
+    return _bridge_host(url) in {"127.0.0.1", "localhost", "::1"}
+
+
+def _running_in_railway() -> bool:
+    return bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+
+
+def _localhost_bridge_misconfigured() -> bool:
+    return _running_in_railway() and _is_loopback_bridge(UNREAL_BRIDGE_URL)
+
+
+def _localhost_bridge_message() -> str:
+    return "UNREAL_BRIDGE_URL points to container localhost, not local Unreal."
 
 
 def _headers() -> dict[str, str]:
@@ -256,29 +286,52 @@ def _headers() -> dict[str, str]:
 
 async def call_plugin(endpoint: str, payload: dict) -> dict:
     """POST to the Unreal plugin HTTP server and return parsed JSON."""
+    global LAST_BRIDGE_ERROR
+    if _localhost_bridge_misconfigured():
+        LAST_BRIDGE_ERROR = _localhost_bridge_message()
+        return _err(LAST_BRIDGE_ERROR)
+
     url = f"{UNREAL_BRIDGE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             response = await client.post(url, json=payload, headers=_headers())
             response.raise_for_status()
+            LAST_BRIDGE_ERROR = None
             return response.json()
     except httpx.ConnectError:
-        return _err(
+        LAST_BRIDGE_ERROR = (
             f"Cannot reach Unreal bridge at {url}. "
             "Set UNREAL_BRIDGE_URL to your editor/plugin bridge URL."
         )
+        return _err(LAST_BRIDGE_ERROR)
     except httpx.HTTPStatusError as exc:
-        return _err(f"Bridge returned HTTP {exc.response.status_code}: {exc.response.text}")
+        LAST_BRIDGE_ERROR = f"Bridge returned HTTP {exc.response.status_code}: {exc.response.text}"
+        return _err(LAST_BRIDGE_ERROR)
     except Exception as exc:  # noqa: BLE001
-        return _err(str(exc))
+        LAST_BRIDGE_ERROR = str(exc)
+        return _err(LAST_BRIDGE_ERROR)
 
 
 async def bridge_health() -> dict[str, Any]:
+    global LAST_BRIDGE_ERROR
     health_url = f"{UNREAL_BRIDGE_URL.rstrip('/')}/health"
+    if _localhost_bridge_misconfigured():
+        LAST_BRIDGE_ERROR = _localhost_bridge_message()
+        return {
+            "reachable": False,
+            "http_status": None,
+            "url": health_url,
+            "error": LAST_BRIDGE_ERROR,
+        }
+
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(health_url, headers=_headers())
             payload = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 200:
+                LAST_BRIDGE_ERROR = None
+            else:
+                LAST_BRIDGE_ERROR = f"Bridge health returned HTTP {resp.status_code}."
             return {
                 "reachable": resp.status_code == 200,
                 "http_status": resp.status_code,
@@ -286,10 +339,11 @@ async def bridge_health() -> dict[str, Any]:
                 "payload": payload,
             }
     except Exception as exc:  # noqa: BLE001
+        LAST_BRIDGE_ERROR = str(exc)
         return {
             "reachable": False,
             "url": health_url,
-            "error": str(exc),
+            "error": LAST_BRIDGE_ERROR,
         }
 
 
@@ -368,6 +422,9 @@ async def status() -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "sane-unreal-agent",
+        "unreal_bridge_url": UNREAL_BRIDGE_URL,
+        "bridge_reachable": bridge.get("reachable", False),
+        "last_bridge_error": LAST_BRIDGE_ERROR,
         "bridge": bridge,
         "config": {
             "unreal_bridge_url": UNREAL_BRIDGE_URL,

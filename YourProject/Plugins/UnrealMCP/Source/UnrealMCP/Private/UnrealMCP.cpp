@@ -15,10 +15,11 @@ void FUnrealMCPModule::StartupModule()
     {
         TickDelegateHandle = GEngine->OnPostEditorTick().AddLambda([this](float /*DeltaTime*/)
         {
-            // Remove ourselves immediately so this fires only once.
-            GEngine->OnPostEditorTick().Remove(TickDelegateHandle);
-            TickDelegateHandle.Reset();
-            BootstrapPythonBridge();
+            if (!bBridgeStarted)
+            {
+                bBridgeStarted = true;
+                BootstrapPythonBridge();
+            }
         });
     }
     else

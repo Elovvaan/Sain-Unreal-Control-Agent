@@ -12,6 +12,9 @@ private:
     FString GetServerScriptPath() const;
     void BootstrapPythonBridge();
 
-    /** Handle for the post-editor-tick delegate; removed after first bootstrap. */
+    /** Handle for the post-editor-tick delegate; removed in ShutdownModule. */
     FDelegateHandle TickDelegateHandle;
+
+    /** Guards against re-entrant or repeated bootstrap calls. */
+    bool bBridgeStarted = false;
 };

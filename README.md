@@ -131,12 +131,15 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or
       "args": ["-m", "src.server"],
       "cwd": "/absolute/path/to/sane-unreal-agent/mcp-server",
       "env": {
-        "UNREAL_PLUGIN_URL": "http://127.0.0.1:8765"
+        "UNREAL_BRIDGE_URL": "https://your-public-tunnel-url",
+        "UNREAL_PLUGIN_URL": "https://your-public-tunnel-url"
       }
     }
   }
 }
 ```
+
+For Railway deployments, set this to your tunnel URL (Cloudflare Tunnel/ngrok), not localhost.
 
 ### 5 — Launch the editor
 
@@ -196,6 +199,75 @@ Once MCP is configured and the editor is running:
 ```
 Create a Level Sequence called Intro_01 with a CineCameraActor on 
 Camera Cuts, animate a 5-second forward dolly, save, and screenshot it.
+```
+
+---
+
+## Railway Remote Bridge Setup (Tunnel Required)
+
+When this server runs on Railway, `127.0.0.1` points to the Railway container itself — **not** your PC.  
+That means `UNREAL_BRIDGE_URL=http://127.0.0.1:8765` cannot reach your local Unreal Editor.
+
+Set `UNREAL_BRIDGE_URL` to a **public HTTPS tunnel URL** that forwards to your local bridge (`http://127.0.0.1:8765` on your PC).
+
+### Option A: Cloudflare Tunnel (recommended)
+
+On your PC (where Unreal Editor is running):
+
+```bash
+# Install cloudflared, then run:
+cloudflared tunnel --url http://127.0.0.1:8765
+```
+
+Cloudflare prints a URL like:
+
+```
+https://random-name.trycloudflare.com
+```
+
+Use that URL in Railway:
+
+```bash
+UNREAL_BRIDGE_URL=https://random-name.trycloudflare.com
+```
+
+### Option B: ngrok
+
+On your PC:
+
+```bash
+ngrok http 8765
+```
+
+ngrok prints a forwarding URL like:
+
+```
+https://abc123.ngrok-free.app
+```
+
+Use that URL in Railway:
+
+```bash
+UNREAL_BRIDGE_URL=https://abc123.ngrok-free.app
+```
+
+### Required env var behavior
+
+- `UNREAL_BRIDGE_URL` **must** be the public tunnel URL to your PC-hosted Unreal bridge.
+- `UNREAL_BRIDGE_URL=http://127.0.0.1:8765` only works when the agent runs on the same machine as Unreal Editor.
+
+### `/status` diagnostics
+
+`GET /status` now reports:
+
+- configured `unreal_bridge_url`
+- `bridge_reachable` boolean
+- `last_bridge_error` string (if any)
+
+If Railway is configured with localhost bridge URL, tool calls return:
+
+```
+UNREAL_BRIDGE_URL points to container localhost, not local Unreal.
 ```
 
 ---
@@ -347,4 +419,3 @@ curl -X POST "https://<app>.up.railway.app/tool/get_editor_state" \
   -H "content-type: application/json" \
   -d '{"args": {}}'
 ```
-

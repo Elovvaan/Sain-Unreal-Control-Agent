@@ -673,10 +673,27 @@ async def ollama_health() -> dict[str, Any]:
 
 @api.post("/agent/chat")
 async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
-    bridge = await bridge_health()
-    editor_state = await _tool_call("get_editor_state", {})
-    command_result = await _route_safe_command(payload.message, payload.confirm)
+    bridge_task = asyncio.create_task(bridge_health())
+    command_task = asyncio.create_task(_route_safe_command(payload.message, payload.confirm))
+    bridge, command_result = await asyncio.gather(bridge_task, command_task)
 
+    editor_state: Any | None = None
+    if isinstance(command_result, dict):
+        routed_name = (
+            command_result.get("tool")
+            or command_result.get("name")
+            or command_result.get("command")
+        )
+        if routed_name == "get_editor_state":
+            editor_state = (
+                command_result.get("result")
+                or command_result.get("data")
+                or command_result.get("response")
+                or command_result
+            )
+
+    if editor_state is None:
+        editor_state = await _tool_call("get_editor_state", {})
     prompt = (
         "You are a local Unreal assistant. Be concise and safe.\n"
         f"User message: {payload.message}\n"

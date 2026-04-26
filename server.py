@@ -252,6 +252,17 @@ TOOL_NAMES = {tool.name for tool in TOOL_DEFINITIONS}
 LAST_BRIDGE_ERROR: str | None = None
 
 
+class BridgeProfile(BaseModel):
+    bridge_type: str = "unknown"
+    supported_routes: list[str] = []
+    reachable: bool = False
+    http_status: int | None = None
+    url: str = ""
+    route_unverified: bool = False
+    payload: dict[str, Any] | None = None
+    error: str | None = None
+
+
 def _bridge_host(url: str) -> str:
     try:
         normalized_url = url.strip()
@@ -289,14 +300,100 @@ def _headers() -> dict[str, str]:
     }
 
 
-async def call_plugin(endpoint: str, payload: dict) -> dict:
-    """POST to the Unreal plugin HTTP server and return parsed JSON."""
-    global LAST_BRIDGE_ERROR
+def _parse_json_if_possible(resp: httpx.Response) -> dict[str, Any]:
+    if not resp.headers.get("content-type", "").startswith("application/json"):
+        return {}
+    try:
+        payload = resp.json()
+        return payload if isinstance(payload, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+async def _detect_bridge_profile() -> BridgeProfile:
+    probe_url = UNREAL_BRIDGE_URL.rstrip("/")
+    profile = BridgeProfile(url=probe_url)
+
     if _localhost_bridge_misconfigured():
-        LAST_BRIDGE_ERROR = _localhost_bridge_message()
+        profile.error = _localhost_bridge_message()
+        return profile
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            root = await client.get(probe_url, headers=_headers())
+            root_payload = _parse_json_if_possible(root)
+            profile.http_status = root.status_code
+            profile.payload = root_payload
+
+            is_unreal_root_404 = (
+                root.status_code == 404
+                and root_payload.get("errorCode") == "errors.com.epicgames.httpserver.route_handler_not_found"
+            )
+
+            health_url = f"{probe_url}/health"
+            health = await client.get(health_url, headers=_headers())
+            health_payload = _parse_json_if_possible(health)
+            health_ok = health.status_code == 200
+
+            remote_info_url = f"{probe_url}/remote/info"
+            remote_info = await client.get(remote_info_url, headers=_headers())
+            remote_payload = _parse_json_if_possible(remote_info)
+            remote_info_ok = remote_info.status_code == 200
+
+            supported_routes: list[str] = []
+            http_routes = remote_payload.get("HttpRoutes")
+            if isinstance(http_routes, list):
+                for route in http_routes:
+                    if isinstance(route, dict):
+                        path = route.get("Path")
+                        if isinstance(path, str):
+                            supported_routes.append(path)
+
+            if health_ok:
+                profile.bridge_type = "custom_mcp_bridge"
+                supported_routes.append("/health")
+            elif remote_info_ok or is_unreal_root_404:
+                profile.bridge_type = "unreal_remote_control"
+            else:
+                profile.bridge_type = "unknown"
+
+            if not supported_routes and profile.bridge_type == "custom_mcp_bridge":
+                supported_routes = ["/health", "/tool/{name}"]
+
+            profile.supported_routes = sorted(set(supported_routes))
+            profile.reachable = bool(health_ok or remote_info_ok or is_unreal_root_404 or root.status_code == 200)
+            profile.route_unverified = bool(is_unreal_root_404)
+            if not profile.reachable:
+                profile.error = f"Bridge probe returned HTTP {root.status_code}."
+            return profile
+    except Exception as exc:  # noqa: BLE001
+        profile.error = str(exc)
+        return profile
+
+
+async def call_plugin(endpoint: str, payload: dict) -> dict:
+    """Call the configured Unreal bridge and return parsed JSON."""
+    global LAST_BRIDGE_ERROR
+    profile = await _detect_bridge_profile()
+
+    if not profile.reachable:
+        LAST_BRIDGE_ERROR = profile.error or f"Cannot reach Unreal bridge at {profile.url}."
         return _err(LAST_BRIDGE_ERROR)
 
-    url = f"{UNREAL_BRIDGE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
+    if profile.bridge_type == "unreal_remote_control":
+        requested_path = f"/{endpoint.lstrip('/')}"
+        has_direct_route = any(
+            route == requested_path or route == "/tool/{name}"
+            for route in profile.supported_routes
+        )
+        if not has_direct_route:
+            LAST_BRIDGE_ERROR = (
+                f"Bridge at {profile.url} is Unreal Remote Control and does not expose {requested_path}. "
+                "Set UNREAL_BRIDGE_URL to the custom MCP bridge (for example http://127.0.0.1:8765)."
+            )
+            return _err(LAST_BRIDGE_ERROR)
+
+    url = f"{profile.url}/{endpoint.lstrip('/')}"
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             response = await client.post(url, json=payload, headers=_headers())
@@ -319,54 +416,12 @@ async def call_plugin(endpoint: str, payload: dict) -> dict:
 
 async def bridge_health() -> dict[str, Any]:
     global LAST_BRIDGE_ERROR
-    probe_url = UNREAL_BRIDGE_URL.rstrip("/")
-    route_unverified = False
-    if _localhost_bridge_misconfigured():
-        LAST_BRIDGE_ERROR = _localhost_bridge_message()
-        return {
-            "reachable": False,
-            "http_status": None,
-            "url": probe_url,
-            "route_unverified": route_unverified,
-            "error": LAST_BRIDGE_ERROR,
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(probe_url, headers=_headers())
-            payload: dict[str, Any] = {}
-            if resp.headers.get("content-type", "").startswith("application/json"):
-                try:
-                    parsed_payload = resp.json()
-                    if isinstance(parsed_payload, dict):
-                        payload = parsed_payload
-                except Exception:  # noqa: BLE001
-                    payload = {}
-
-            is_unreal_http_route_miss = (
-                resp.status_code == 404
-                and payload.get("errorCode") == "errors.com.epicgames.httpserver.route_handler_not_found"
-            )
-            if resp.status_code == 200 or is_unreal_http_route_miss:
-                LAST_BRIDGE_ERROR = None
-                route_unverified = is_unreal_http_route_miss
-            else:
-                LAST_BRIDGE_ERROR = f"Bridge probe returned HTTP {resp.status_code}."
-            return {
-                "reachable": resp.status_code == 200 or is_unreal_http_route_miss,
-                "http_status": resp.status_code,
-                "url": probe_url,
-                "route_unverified": route_unverified,
-                "payload": payload,
-            }
-    except Exception as exc:  # noqa: BLE001
-        LAST_BRIDGE_ERROR = str(exc)
-        return {
-            "reachable": False,
-            "url": probe_url,
-            "route_unverified": route_unverified,
-            "error": LAST_BRIDGE_ERROR,
-        }
+    profile = await _detect_bridge_profile()
+    if profile.error:
+        LAST_BRIDGE_ERROR = profile.error
+    elif profile.reachable:
+        LAST_BRIDGE_ERROR = None
+    return profile.model_dump()
 
 
 async def ollama_generate(prompt: str) -> dict[str, Any]:
@@ -604,6 +659,8 @@ async def startup_event() -> None:
     log.info("HTTP bind: %s:%s", HOST, PORT)
     log.info("Unreal bridge URL: %s", UNREAL_BRIDGE_URL)
     log.info("Unreal auth token configured: %s", bool(UNREAL_AUTH_TOKEN))
+    bridge = await bridge_health()
+    log.info("Detected bridge_type=%s supported_routes=%s", bridge.get("bridge_type"), bridge.get("supported_routes"))
 
 
 @api.get("/")
@@ -645,6 +702,8 @@ async def health() -> dict[str, Any]:
         "unreal_editor_detected": editor_detected,
         "message": message,
         "bridge_url": UNREAL_BRIDGE_URL,
+        "bridge_type": bridge.get("bridge_type", "unknown"),
+        "supported_routes": bridge.get("supported_routes", []),
         "bridge_error": bridge.get("error"),
     }
 

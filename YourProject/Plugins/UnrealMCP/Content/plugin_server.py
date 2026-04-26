@@ -69,7 +69,7 @@ def tool_get_editor_state(_args: dict) -> dict:
         "get_editor_state",
         {
             "world": world.get_name() if world else None,
-            "is_playing": bool(getattr(editor_level_library, "get_game_view", lambda: False)()),
+            "is_game_view": bool(getattr(editor_level_library, "get_game_view", lambda: False)()),
         },
     )
 

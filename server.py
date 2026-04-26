@@ -467,12 +467,25 @@ def _extract_move(message: str) -> tuple[str, float, float, float] | None:
     )
 
 
+def _is_list_actors_request(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:list|show|get|display)\s+(?:all\s+)?actors\b"
+            r"|\bactors?\s+list\b"
+            r"|\bactors?\s+in\s+(?:my\s+)?(?:unreal\s+)?scene\b"
+            r"|\bwhat\s+actors?\s+(?:are\s+)?in\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
 async def _route_safe_command(message: str, confirm: bool) -> dict[str, Any] | None:
     text = message.lower()
     if "inspect scene" in text or "what is in my unreal scene" in text or "scene" in text:
         return await _tool_call("get_editor_state", {})
 
-    if "list actors" in text or "actors" in text:
+    if _is_list_actors_request(text):
         return await _tool_call(
             "run_editor_python",
             {

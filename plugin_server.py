@@ -68,12 +68,13 @@ def tool_list_level_actors(args: dict) -> dict:
     actors = []
     for actor in _ell.get_all_level_actors():
         label = actor.get_actor_label()
+        actor_class = actor.get_class()
         if filter_text and filter_text not in label.lower():
             continue
         actors.append(
             {
                 "label": label,
-                "class": actor.get_class().get_name() if actor.get_class() else "",
+                "class": actor_class.get_name() if actor_class else "",
                 "path": actor.get_path_name(),
             }
         )

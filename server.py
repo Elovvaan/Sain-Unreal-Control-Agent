@@ -74,6 +74,17 @@ TOOL_DEFINITIONS: list[Tool] = [
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
+        name="list_level_actors",
+        description="List actors currently present in the loaded editor level.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "filter": {"type": "string", "default": "", "description": "Optional substring filter on actor label"},
+            },
+            "required": [],
+        },
+    ),
+    Tool(
         name="list_assets",
         description="List assets in the Content Browser under a given path.",
         inputSchema={
@@ -585,16 +596,7 @@ async def _route_safe_command(message: str, confirm: bool) -> dict[str, Any] | N
         return await _tool_call("get_editor_state", {})
 
     if _is_list_actors_request(text):
-        return await _tool_call(
-            "run_editor_python",
-            {
-                "code": (
-                    "import unreal\n"
-                    "actors=[a.get_actor_label() for a in unreal.EditorLevelLibrary.get_all_level_actors()]\n"
-                    "print({'actors':actors,'count':len(actors)})"
-                )
-            },
-        )
+        return await _tool_call("list_level_actors", {})
 
     if _is_cube_create_intent(text):
         return await _spawn_cube_command()

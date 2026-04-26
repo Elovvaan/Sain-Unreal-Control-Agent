@@ -53,8 +53,67 @@ def tool_ping(_args: dict) -> dict:
     return ok("ping", {"status": "ok"})
 
 
+def _require_unreal(action: str) -> dict | None:
+    if not hasattr(unreal, "EditorLevelLibrary"):
+        return err(action, "Unreal Editor Python API unavailable in this runtime.")
+    return None
+
+
+def tool_get_editor_state(_args: dict) -> dict:
+    missing = _require_unreal("get_editor_state")
+    if missing:
+        return missing
+    editor_level_library = unreal.EditorLevelLibrary
+    world = editor_level_library.get_editor_world()
+    return ok(
+        "get_editor_state",
+        {
+            "world": world.get_name() if world else None,
+            "is_game_view": bool(getattr(editor_level_library, "get_game_view", lambda: False)()),
+        },
+    )
+
+
+def tool_list_level_actors(args: dict) -> dict:
+    missing = _require_unreal("list_level_actors")
+    if missing:
+        return missing
+    filter_text = str(args.get("filter", "")).lower().strip()
+    actors = []
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        label = actor.get_actor_label()
+        if filter_text and filter_text not in label.lower():
+            continue
+        actors.append(
+            {
+                "label": label,
+                "class": actor.get_class().get_name() if actor.get_class() else "",
+                "path": actor.get_path_name(),
+            }
+        )
+    return ok("list_level_actors", {"count": len(actors), "actors": actors})
+
+
+def tool_run_editor_python(args: dict) -> dict:
+    missing = _require_unreal("run_editor_python")
+    if missing:
+        return missing
+    code = args.get("code", "")
+    if not code:
+        return err("run_editor_python", "Missing required field: code")
+    namespace: dict[str, Any] = {}
+    try:
+        exec(code, {"unreal": unreal, "__builtins__": __builtins__}, namespace)  # noqa: S102
+    except Exception as exc:
+        return err("run_editor_python", str(exc), traceback.format_exc())
+    return ok("run_editor_python", {"result": namespace.get("RESULT", "executed")})
+
+
 TOOLS = {
     "ping": tool_ping,
+    "get_editor_state": tool_get_editor_state,
+    "list_level_actors": tool_list_level_actors,
+    "run_editor_python": tool_run_editor_python,
 }
 
 

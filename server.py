@@ -319,35 +319,52 @@ async def call_plugin(endpoint: str, payload: dict) -> dict:
 
 async def bridge_health() -> dict[str, Any]:
     global LAST_BRIDGE_ERROR
-    health_url = f"{UNREAL_BRIDGE_URL.rstrip('/')}/health"
+    probe_url = UNREAL_BRIDGE_URL.rstrip("/")
+    route_unverified = False
     if _localhost_bridge_misconfigured():
         LAST_BRIDGE_ERROR = _localhost_bridge_message()
         return {
             "reachable": False,
             "http_status": None,
-            "url": health_url,
+            "url": probe_url,
+            "route_unverified": route_unverified,
             "error": LAST_BRIDGE_ERROR,
         }
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(health_url, headers=_headers())
-            payload = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code == 200:
+            resp = await client.get(probe_url, headers=_headers())
+            payload: dict[str, Any] = {}
+            if resp.headers.get("content-type", "").startswith("application/json"):
+                try:
+                    parsed_payload = resp.json()
+                    if isinstance(parsed_payload, dict):
+                        payload = parsed_payload
+                except Exception:  # noqa: BLE001
+                    payload = {}
+
+            is_unreal_http_route_miss = (
+                resp.status_code == 404
+                and payload.get("errorCode") == "errors.com.epicgames.httpserver.route_handler_not_found"
+            )
+            if resp.status_code == 200 or is_unreal_http_route_miss:
                 LAST_BRIDGE_ERROR = None
+                route_unverified = is_unreal_http_route_miss
             else:
-                LAST_BRIDGE_ERROR = f"Bridge health returned HTTP {resp.status_code}."
+                LAST_BRIDGE_ERROR = f"Bridge probe returned HTTP {resp.status_code}."
             return {
-                "reachable": resp.status_code == 200,
+                "reachable": resp.status_code == 200 or is_unreal_http_route_miss,
                 "http_status": resp.status_code,
-                "url": health_url,
+                "url": probe_url,
+                "route_unverified": route_unverified,
                 "payload": payload,
             }
     except Exception as exc:  # noqa: BLE001
         LAST_BRIDGE_ERROR = str(exc)
         return {
             "reachable": False,
-            "url": health_url,
+            "url": probe_url,
+            "route_unverified": route_unverified,
             "error": LAST_BRIDGE_ERROR,
         }
 
@@ -612,6 +629,7 @@ async def health() -> dict[str, Any]:
     bridge = await bridge_health()
     editor_detected = await asyncio.to_thread(detect_unreal_editor_process)
     bridge_up = bridge.get("reachable", False)
+    route_unverified = bool(bridge.get("route_unverified", False))
     message = None
     if not bridge_up:
         message = "Unreal plugin bridge is not running."
@@ -623,6 +641,7 @@ async def health() -> dict[str, Any]:
         "service": "sane-unreal-agent",
         "mcp": "up",
         "unreal_bridge": "up" if bridge_up else "down",
+        "route_unverified": route_unverified,
         "unreal_editor_detected": editor_detected,
         "message": message,
         "bridge_url": UNREAL_BRIDGE_URL,

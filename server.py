@@ -480,6 +480,33 @@ def _is_list_actors_request(text: str) -> bool:
     )
 
 
+def _is_cube_create_intent(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:create|spawn|add)\b(?:\s+\w+){0,3}\s+\bcube\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+async def _spawn_cube_command() -> dict[str, Any]:
+    return await _tool_call(
+        "run_editor_python",
+        {
+            "code": (
+                "import unreal\n"
+                "loc=unreal.Vector(0,0,100)\n"
+                "actor=unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.StaticMeshActor, loc)\n"
+                "mesh=unreal.load_asset('/Engine/BasicShapes/Cube.Cube')\n"
+                "actor.static_mesh_component.set_static_mesh(mesh)\n"
+                "actor.set_actor_label('AI_Cube')\n"
+                "print({'created_actor':actor.get_actor_label()})"
+            )
+        },
+    )
+
+
 async def _route_safe_command(message: str, confirm: bool) -> dict[str, Any] | None:
     text = message.lower()
     if "inspect scene" in text or "what is in my unreal scene" in text or "scene" in text:
@@ -497,21 +524,8 @@ async def _route_safe_command(message: str, confirm: bool) -> dict[str, Any] | N
             },
         )
 
-    if "create cube" in text or "spawn cube" in text:
-        return await _tool_call(
-            "run_editor_python",
-            {
-                "code": (
-                    "import unreal\n"
-                    "loc=unreal.Vector(0,0,100)\n"
-                    "actor=unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.StaticMeshActor, loc)\n"
-                    "mesh=unreal.load_asset('/Engine/BasicShapes/Cube.Cube')\n"
-                    "actor.static_mesh_component.set_static_mesh(mesh)\n"
-                    "actor.set_actor_label('AI_Cube')\n"
-                    "print({'created_actor':actor.get_actor_label()})"
-                )
-            },
-        )
+    if _is_cube_create_intent(text):
+        return await _spawn_cube_command()
 
     if "move actor" in text:
         move = _extract_move(message)
@@ -673,9 +687,30 @@ async def ollama_health() -> dict[str, Any]:
 
 @api.post("/agent/chat")
 async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
-    bridge_task = asyncio.create_task(bridge_health())
-    command_task = asyncio.create_task(_route_safe_command(payload.message, payload.confirm))
-    bridge, command_result = await asyncio.gather(bridge_task, command_task)
+    text = payload.message.lower()
+    routed_intent: str = "chat_only"
+    command_executed = False
+    command_result: dict[str, Any] | None = None
+    error: str | None = None
+
+    bridge = await bridge_health()
+    if _is_cube_create_intent(text):
+        routed_intent = "spawn_cube"
+        command_result = await _spawn_cube_command()
+        command_executed = True
+    else:
+        command_result = await _route_safe_command(payload.message, payload.confirm)
+        if command_result is not None:
+            routed_intent = "safe_command"
+            command_executed = True
+
+    if command_executed and (not isinstance(command_result, dict) or not command_result.get("success", False)):
+        if isinstance(command_result, dict):
+            command_errors = command_result.get("errors") or []
+            if command_errors:
+                error = str(command_errors[0])
+        if not error:
+            error = bridge.get("error") or LAST_BRIDGE_ERROR or "Command execution failed."
 
     editor_state: Any | None = None
     if isinstance(command_result, dict):
@@ -708,6 +743,9 @@ async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
         "assistant": assistant_text,
         "model": OLLAMA_MODEL,
         "ollama_ok": llm.get("ok", False),
+        "routed_intent": routed_intent,
+        "command_executed": command_executed,
+        "error": error,
         "bridge": bridge,
         "editor_state": editor_state,
         "command_result": command_result,

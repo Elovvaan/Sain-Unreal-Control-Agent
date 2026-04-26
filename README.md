@@ -160,7 +160,7 @@ LogTemp: UnrealControlPlugin: HTTP bridge listening on 127.0.0.1:8765
    ```bash
    export OLLAMA_URL=http://127.0.0.1:11434
    export OLLAMA_MODEL=llama3:latest
-   export UNREAL_BRIDGE_URL=http://127.0.0.1:30010
+   export UNREAL_BRIDGE_URL=http://127.0.0.1:8765
    ```
 3. Start Ollama:
    ```bash
@@ -170,9 +170,13 @@ LogTemp: UnrealControlPlugin: HTTP bridge listening on 127.0.0.1:8765
    ```bash
    ollama run llama3
    ```
-5. Confirm the Unreal plugin bridge is live:
+5. Confirm the custom Unreal MCP bridge is live:
    ```bash
-   curl http://127.0.0.1:30010/health
+   curl http://127.0.0.1:8765/health
+   ```
+   Optional fallback/status probe (Remote Control):
+   ```bash
+   curl http://127.0.0.1:30010/remote/info
    ```
 6. In this repo root, start the local MCP HTTP server:
    ```bash

@@ -63,6 +63,23 @@ def tool_get_editor_state(_args: dict) -> dict:
     })
 
 
+def tool_list_level_actors(args: dict) -> dict:
+    filter_text = str(args.get("filter", "")).lower().strip()
+    actors = []
+    for actor in _ell.get_all_level_actors():
+        label = actor.get_actor_label()
+        if filter_text and filter_text not in label.lower():
+            continue
+        actors.append(
+            {
+                "label": label,
+                "class": actor.get_class().get_name() if actor.get_class() else "",
+                "path": actor.get_path_name(),
+            }
+        )
+    return ok("list_level_actors", {"count": len(actors), "actors": actors})
+
+
 def tool_list_assets(args: dict) -> dict:
     path    = args.get("path", "/Game")
     filter_ = args.get("filter", "")
@@ -295,6 +312,7 @@ def tool_take_screenshot(args: dict) -> dict:
 
 TOOLS = {
     "get_editor_state":      tool_get_editor_state,
+    "list_level_actors":     tool_list_level_actors,
     "list_assets":           tool_list_assets,
     "create_level":          tool_create_level,
     "spawn_actor":           tool_spawn_actor,

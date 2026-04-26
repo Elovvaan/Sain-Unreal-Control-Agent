@@ -451,7 +451,7 @@ async def _tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_move(message: str) -> tuple[str, float, float, float] | None:
-    actor_match = re.search(r"(?:actor\s+)?['\"]?([A-Za-z0-9_\-]+)['\"]?", message, re.IGNORECASE)
+    actor_match = re.search(r"\bactor\s+['\"]?([A-Za-z0-9_\-]+)['\"]?", message, re.IGNORECASE)
     xyz_match = re.search(
         r"(?:to|x)\s*\(?\s*(-?\d+(?:\.\d+)?)\s*[, ]+\s*(-?\d+(?:\.\d+)?)\s*[, ]+\s*(-?\d+(?:\.\d+)?)\s*\)?",
         message,

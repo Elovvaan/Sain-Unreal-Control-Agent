@@ -156,19 +156,49 @@ LogTemp: UnrealControlPlugin: HTTP bridge listening on 127.0.0.1:8765
 ### Local-only startup (exact order)
 
 1. **Open Unreal Editor first** (your project with UnrealControlPlugin enabled).
-2. Confirm the Unreal plugin bridge is live:
+2. Export local environment variables:
    ```bash
-   curl http://127.0.0.1:8765/health
+   export OLLAMA_URL=http://127.0.0.1:11434
+   export OLLAMA_MODEL=llama3:latest
+   export UNREAL_BRIDGE_URL=http://127.0.0.1:30010
    ```
-3. In this repo root, start the local MCP HTTP server:
+3. Start Ollama:
    ```bash
-   npm run local:unreal
+   ollama serve
    ```
-4. In another terminal, verify local MCP health:
+4. In another terminal, warm/load the model:
+   ```bash
+   ollama run llama3
+   ```
+5. Confirm the Unreal plugin bridge is live:
+   ```bash
+   curl http://127.0.0.1:30010/health
+   ```
+6. In this repo root, start the local MCP HTTP server:
+   ```bash
+   python server.py
+   ```
+7. In another terminal, verify local MCP health:
    ```bash
    curl http://127.0.0.1:3000/health
    ```
-5. Call a tool through MCP HTTP proxy:
+8. Verify Ollama connectivity:
+   ```bash
+   curl http://127.0.0.1:3000/ollama/health
+   ```
+9. Test chat routing:
+   ```bash
+   curl -X POST http://127.0.0.1:3000/agent/chat \
+     -H "Content-Type: application/json" \
+     -d '{"message":"What is in my Unreal scene?"}'
+   ```
+10. Test create cube intent:
+   ```bash
+   curl -X POST http://127.0.0.1:3000/agent/chat \
+     -H "Content-Type: application/json" \
+     -d '{"message":"Create a cube in the level"}'
+   ```
+11. Call a tool through MCP HTTP proxy:
    ```bash
    curl -X POST http://127.0.0.1:3000/mcp/call_tool \
      -H "Content-Type: application/json" \

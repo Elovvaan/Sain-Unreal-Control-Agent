@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from typing import Any
@@ -22,6 +23,7 @@ from fastapi.responses import JSONResponse
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+from pydantic import BaseModel
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -54,6 +56,8 @@ def _get_int_env(name: str, default: int) -> int:
 
 
 UNREAL_BRIDGE_URL = os.environ.get("UNREAL_BRIDGE_URL") or os.environ.get("UNREAL_PLUGIN_URL") or "http://127.0.0.1:8765"
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3:latest")
 UNREAL_AUTH_TOKEN = os.environ.get("UNREAL_AUTH_TOKEN", "").strip()
 REQUEST_TIMEOUT = _get_float_env("REQUEST_TIMEOUT", 60.0)
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -348,6 +352,48 @@ async def bridge_health() -> dict[str, Any]:
         }
 
 
+async def ollama_generate(prompt: str) -> dict[str, Any]:
+    url = f"{OLLAMA_URL}/api/generate"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return {"ok": True, "response": data.get("response", ""), "raw": data}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "response": "", "error": str(exc)}
+
+
+async def ollama_model_status() -> dict[str, Any]:
+    tags_url = f"{OLLAMA_URL}/api/tags"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(tags_url)
+            resp.raise_for_status()
+            payload = resp.json()
+            models = payload.get("models", [])
+            available = [m.get("name", "") for m in models]
+            return {
+                "status": "ok",
+                "ollama_url": OLLAMA_URL,
+                "configured_model": OLLAMA_MODEL,
+                "configured_model_available": OLLAMA_MODEL in available,
+                "available_models": available,
+            }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "down",
+            "ollama_url": OLLAMA_URL,
+            "configured_model": OLLAMA_MODEL,
+            "error": str(exc),
+        }
+
+
 def detect_unreal_editor_process() -> bool:
     """Best-effort local process detection for Unreal Editor."""
     if os.name == "nt":
@@ -395,6 +441,118 @@ def _json(d: dict) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(d, indent=2))]
 
 
+class AgentChatRequest(BaseModel):
+    message: str
+    confirm: bool = False
+
+
+async def _tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    return await call_plugin(f"tool/{name}", {"tool": name, "args": args})
+
+
+def _extract_move(message: str) -> tuple[str, float, float, float] | None:
+    actor_match = re.search(r"\bactor\s+['\"]?([A-Za-z0-9_\-]+)['\"]?", message, re.IGNORECASE)
+    xyz_match = re.search(
+        r"(?:to|x)\s*\(?\s*(-?\d+(?:\.\d+)?)\s*[, ]+\s*(-?\d+(?:\.\d+)?)\s*[, ]+\s*(-?\d+(?:\.\d+)?)\s*\)?",
+        message,
+        re.IGNORECASE,
+    )
+    if not actor_match or not xyz_match:
+        return None
+    return (
+        actor_match.group(1),
+        float(xyz_match.group(1)),
+        float(xyz_match.group(2)),
+        float(xyz_match.group(3)),
+    )
+
+
+def _is_list_actors_request(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:list|show|get|display)\s+(?:all\s+)?actors\b"
+            r"|\bactors?\s+list\b"
+            r"|\bactors?\s+in\s+(?:my\s+)?(?:unreal\s+)?scene\b"
+            r"|\bwhat\s+actors?\s+(?:are\s+)?in\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+async def _route_safe_command(message: str, confirm: bool) -> dict[str, Any] | None:
+    text = message.lower()
+    if "inspect scene" in text or "what is in my unreal scene" in text or "scene" in text:
+        return await _tool_call("get_editor_state", {})
+
+    if _is_list_actors_request(text):
+        return await _tool_call(
+            "run_editor_python",
+            {
+                "code": (
+                    "import unreal\n"
+                    "actors=[a.get_actor_label() for a in unreal.EditorLevelLibrary.get_all_level_actors()]\n"
+                    "print({'actors':actors,'count':len(actors)})"
+                )
+            },
+        )
+
+    if "create cube" in text or "spawn cube" in text:
+        return await _tool_call(
+            "run_editor_python",
+            {
+                "code": (
+                    "import unreal\n"
+                    "loc=unreal.Vector(0,0,100)\n"
+                    "actor=unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.StaticMeshActor, loc)\n"
+                    "mesh=unreal.load_asset('/Engine/BasicShapes/Cube.Cube')\n"
+                    "actor.static_mesh_component.set_static_mesh(mesh)\n"
+                    "actor.set_actor_label('AI_Cube')\n"
+                    "print({'created_actor':actor.get_actor_label()})"
+                )
+            },
+        )
+
+    if "move actor" in text:
+        move = _extract_move(message)
+        if not move:
+            return _err("For move actor, provide actor name and XYZ, e.g. move actor Cube to 100, 0, 200.", action="move_actor")
+        actor_name, x, y, z = move
+        return await _tool_call(
+            "run_editor_python",
+            {
+                "code": (
+                    "import unreal\n"
+                    f"name={actor_name!r}\n"
+                    f"target=unreal.Vector({x},{y},{z})\n"
+                    "actors=unreal.EditorLevelLibrary.get_all_level_actors()\n"
+                    "match=[a for a in actors if a.get_actor_label()==name]\n"
+                    "if not match:\n"
+                    "    print({'moved':False,'error':'actor_not_found','name':name})\n"
+                    "else:\n"
+                    "    match[0].set_actor_location(target, False, False)\n"
+                    "    print({'moved':True,'name':name,'location':[target.x,target.y,target.z]})"
+                )
+            },
+        )
+
+    if "save level" in text or "save map" in text:
+        if not confirm:
+            return _err("Save level is blocked unless confirm=true is provided.", action="save_level")
+        return await _tool_call(
+            "run_editor_python",
+            {
+                "code": (
+                    "import unreal\n"
+                    "ok=unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)\n"
+                    "print({'saved':bool(ok)})"
+                )
+            },
+        )
+
+    return None
+
+
 @mcp_app.list_tools()
 async def list_tools() -> list[Tool]:
     return TOOL_DEFINITIONS
@@ -422,7 +580,16 @@ async def root() -> dict[str, Any]:
     return {
         "service": "sane-unreal-agent",
         "status": "ok",
-        "endpoints": ["/health", "/status", "/tools", "/tool/{name}", "/mcp/tools", "/mcp/call_tool"],
+        "endpoints": [
+            "/health",
+            "/status",
+            "/tools",
+            "/tool/{name}",
+            "/mcp/tools",
+            "/mcp/call_tool",
+            "/ollama/health",
+            "/agent/chat",
+        ],
     }
 
 
@@ -497,6 +664,54 @@ async def mcp_call_tool(payload: dict) -> JSONResponse:
     if not name:
         raise HTTPException(status_code=400, detail="Field 'name' is required")
     return await tool_proxy(name, {"args": args})
+
+
+@api.get("/ollama/health")
+async def ollama_health() -> dict[str, Any]:
+    return await ollama_model_status()
+
+
+@api.post("/agent/chat")
+async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
+    bridge_task = asyncio.create_task(bridge_health())
+    command_task = asyncio.create_task(_route_safe_command(payload.message, payload.confirm))
+    bridge, command_result = await asyncio.gather(bridge_task, command_task)
+
+    editor_state: Any | None = None
+    if isinstance(command_result, dict):
+        routed_name = (
+            command_result.get("tool")
+            or command_result.get("name")
+            or command_result.get("command")
+        )
+        if routed_name == "get_editor_state":
+            editor_state = (
+                command_result.get("result")
+                or command_result.get("data")
+                or command_result.get("response")
+                or command_result
+            )
+
+    if editor_state is None:
+        editor_state = await _tool_call("get_editor_state", {})
+    prompt = (
+        "You are a local Unreal assistant. Be concise and safe.\n"
+        f"User message: {payload.message}\n"
+        f"Unreal bridge health: {json.dumps(bridge)}\n"
+        f"Editor state: {json.dumps(editor_state)}\n"
+        f"Executed command result: {json.dumps(command_result)}\n"
+        "If command is blocked, explain confirm=true requirement."
+    )
+    llm = await ollama_generate(prompt)
+    assistant_text = llm.get("response", "").strip() or "I could not get a response from Ollama."
+    return {
+        "assistant": assistant_text,
+        "model": OLLAMA_MODEL,
+        "ollama_ok": llm.get("ok", False),
+        "bridge": bridge,
+        "editor_state": editor_state,
+        "command_result": command_result,
+    }
 
 
 async def run_stdio_mcp() -> None:

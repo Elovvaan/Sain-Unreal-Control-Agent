@@ -693,17 +693,21 @@ async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
     command_result: dict[str, Any] | None = None
     error: str | None = None
 
-    bridge = await bridge_health()
     if _is_cube_create_intent(text):
         routed_intent = "spawn_cube"
-        command_result = await _spawn_cube_command()
         command_executed = True
+        command_task = _spawn_cube_command()
     else:
-        command_result = await _route_safe_command(payload.message, payload.confirm)
-        if command_result is not None:
-            routed_intent = "safe_command"
-            command_executed = True
+        command_task = _route_safe_command(payload.message, payload.confirm)
 
+    bridge, command_result = await asyncio.gather(
+        bridge_health(),
+        command_task,
+    )
+
+    if not command_executed and command_result is not None:
+        routed_intent = "safe_command"
+        command_executed = True
     if command_executed and (not isinstance(command_result, dict) or not command_result.get("success", False)):
         if isinstance(command_result, dict):
             command_errors = command_result.get("errors") or []
